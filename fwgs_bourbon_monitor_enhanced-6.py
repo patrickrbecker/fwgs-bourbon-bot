@@ -310,21 +310,6 @@ class BourbonMonitor:
             
             logger.info(f"Total unique products found: {len(products)}")
             
-            # If we found fewer than expected, save debug info
-            if len(products) < 7:
-                logger.warning(f"Found only {len(products)} products, expected 7")
-                try:
-                    # Save page source
-                    with open('debug_page_source.html', 'w', encoding='utf-8') as f:
-                        f.write(self.driver.page_source)
-                    logger.info("Saved page source to debug_page_source.html")
-                    
-                    # Take screenshot
-                    self.driver.save_screenshot('debug_screenshot.png')
-                    logger.info("Saved screenshot to debug_screenshot.png")
-                except:
-                    pass
-            
             return products
             
         except Exception as e:
@@ -395,82 +380,120 @@ class BourbonMonitor:
                 logger.warning("No products found")
                 return
             
-            # Create content hash
-            content = '\n'.join(sorted(products))
-            content_hash = hashlib.md5(content.encode()).hexdigest()
+            # Create dictionaries for comparison (name -> full product info)
+            current_products_dict = {}
+            for product in products:
+                parts = product.split(' | ')
+                if parts:
+                    name = parts[0]
+                    current_products_dict[name] = product
             
             # Display current products
             print(f"\n🥃 BOURBON INVENTORY UPDATE")
             print(f"📅 {datetime.now().strftime('%B %d, %Y at %I:%M %p')}")
             print(f"🔍 Found {len(products)} products available\n")
             
-            for i, product in enumerate(products, 1):
+            for i, product in enumerate(sorted(products), 1):
                 cleaned_product = self.clean_product_text(product)
                 print(f"PRODUCT {i}: {cleaned_product}")
             
             print(f"\n{'=' * 60}")
             
             if self.last_hash is None:
-                # First run
-                self.last_hash = content_hash
+                # First run - just store the products
+                self.last_hash = "initialized"
                 self.last_products = products
                 logger.info(f"✅ Initial scan complete - tracking {len(products)} products")
                 self.send_email("🥃 Bourbon Monitor Started", 
                                f"🚀 Monitoring started successfully!\n\n📊 Currently tracking {len(products)} products:\n\n" + 
-                               "\n".join(f"PRODUCT {i}: {self.clean_product_text(p)}\n" for i, p in enumerate(products, 1)))
-                
-            elif content_hash != self.last_hash:
-                # Changes detected
-                current_set = set(products)
-                previous_set = set(self.last_products)
-                
-                added = current_set - previous_set
-                removed = previous_set - current_set
-                
-                print(f"\n🚨 CHANGES DETECTED!")
-                print(f"📈 Previous: {len(self.last_products)} → Current: {len(products)}")
-                
-                message = f"🥃 BOURBON INVENTORY ALERT\n"
-                message += f"📅 {datetime.now().strftime('%B %d, %Y at %I:%M %p')}\n\n"
-                
-                if added:
-                    print(f"\n🆕 NEW ARRIVALS ({len(added)}):")
-                    message += f"🆕 NEW ARRIVALS ({len(added)}):\n\n"
-                    for i, item in enumerate(sorted(added), 1):
-                        cleaned_item = self.clean_product_text(item)
-                        print(f"NEW PRODUCT {i}: {cleaned_item}")
-                        message += f"NEW PRODUCT {i}: {cleaned_item}\n\n"
-                
-                if removed:
-                    print(f"\n❌ NO LONGER AVAILABLE ({len(removed)}):")
-                    message += f"❌ NO LONGER AVAILABLE ({len(removed)}):\n\n"
-                    for i, item in enumerate(sorted(removed), 1):
-                        cleaned_item = self.clean_product_text(item)
-                        print(f"SOLD OUT PRODUCT {i}: {cleaned_item}")
-                        message += f"SOLD OUT PRODUCT {i}: {cleaned_item}\n\n"
-                
-                print(f"\n📋 COMPLETE CURRENT INVENTORY ({len(products)}):")
-                message += f"📋 COMPLETE CURRENT INVENTORY ({len(products)}):\n\n"
-                for i, p in enumerate(products, 1):
-                    cleaned_p = self.clean_product_text(p)
-                    print(f"PRODUCT {i}: {cleaned_p}")
-                    message += f"PRODUCT {i}: {cleaned_p}\n\n"
-                
-                subject = "🥃 Bourbon Alert: "
-                if added and removed:
-                    subject += f"{len(added)} New, {len(removed)} Sold Out"
-                elif added:
-                    subject += f"{len(added)} New Arrival{'s' if len(added) > 1 else ''}!"
-                else:
-                    subject += f"{len(removed)} Sold Out"
-                
-                self.send_email(subject, message)
-                self.last_hash = content_hash
-                self.last_products = products
-                logger.info(f"🔄 Changes processed: +{len(added)} new, -{len(removed)} removed")
+                               "\n".join(f"PRODUCT {i}: {self.clean_product_text(p)}\n" for i, p in enumerate(sorted(products), 1)))
                 
             else:
-                logger.info("✅ No changes - inventory unchanged")
+                # Build dictionary of previous products
+                previous_products_dict = {}
+                for product in self.last_products:
+                    parts = product.split(' | ')
+                    if parts:
+                        name = parts[0]
+                        previous_products_dict[name] = product
+                
+                # Find actual new/removed products (by name only)
+                current_names = set(current_products_dict.keys())
+                previous_names = set(previous_products_dict.keys())
+                
+                truly_new = current_names - previous_names
+                truly_removed = previous_names - current_names
+                
+                # Check for low inventory
+                low_inventory = []
+                for name, product in current_products_dict.items():
+                    parts = product.split(' | ')
+                    if len(parts) >= 4:
+                        availability = parts[3]
+                        # Extract number from availability
+                        import re
+                        stock_match = re.search(r'(\d+)\s*In Stock', availability)
+                        if stock_match:
+                            stock_count = int(stock_match.group(1))
+                            if stock_count < 5:
+                                low_inventory.append(product)
+                
+                # Only send email if there are actual changes or low inventory
+                if truly_new or truly_removed or low_inventory:
+                    print(f"\n🚨 CHANGES DETECTED!")
+                    
+                    message = f"🥃 BOURBON INVENTORY ALERT\n"
+                    message += f"📅 {datetime.now().strftime('%B %d, %Y at %I:%M %p')}\n\n"
+                    
+                    email_parts = []
+                    
+                    if truly_new:
+                        print(f"\n🆕 NEW ARRIVALS ({len(truly_new)}):")
+                        message += f"🆕 NEW ARRIVALS ({len(truly_new)}):\n\n"
+                        email_parts.append("New Arrivals")
+                        for i, name in enumerate(sorted(truly_new), 1):
+                            product = current_products_dict[name]
+                            cleaned_item = self.clean_product_text(product)
+                            print(f"NEW PRODUCT {i}: {cleaned_item}")
+                            message += f"NEW PRODUCT {i}: {cleaned_item}\n\n"
+                    
+                    if truly_removed:
+                        print(f"\n❌ SOLD OUT ({len(truly_removed)}):")
+                        message += f"❌ SOLD OUT ({len(truly_removed)}):\n\n"
+                        email_parts.append("Sold Out")
+                        for i, name in enumerate(sorted(truly_removed), 1):
+                            product = previous_products_dict[name]
+                            cleaned_item = self.clean_product_text(product)
+                            print(f"SOLD OUT PRODUCT {i}: {cleaned_item}")
+                            message += f"SOLD OUT PRODUCT {i}: {cleaned_item}\n\n"
+                    
+                    if low_inventory:
+                        print(f"\n⚠️ LOW INVENTORY ({len(low_inventory)}):")
+                        message += f"⚠️ LOW INVENTORY - LESS THAN 5 BOTTLES ({len(low_inventory)}):\n\n"
+                        email_parts.append("Low Inventory")
+                        for i, product in enumerate(sorted(low_inventory), 1):
+                            cleaned_item = self.clean_product_text(product)
+                            print(f"LOW STOCK {i}: {cleaned_item}")
+                            message += f"LOW STOCK {i}: {cleaned_item}\n\n"
+                    
+                    # Add complete inventory at the end
+                    print(f"\n📋 COMPLETE CURRENT INVENTORY ({len(products)}):")
+                    message += f"📋 COMPLETE CURRENT INVENTORY ({len(products)}):\n\n"
+                    for i, p in enumerate(sorted(products), 1):
+                        cleaned_p = self.clean_product_text(p)
+                        print(f"PRODUCT {i}: {cleaned_p}")
+                        message += f"PRODUCT {i}: {cleaned_p}\n\n"
+                    
+                    # Create subject based on what changed
+                    subject = "🥃 Bourbon Alert: " + " | ".join(email_parts)
+                    
+                    self.send_email(subject, message)
+                    logger.info(f"🔄 Changes processed: {len(truly_new)} new, {len(truly_removed)} removed, {len(low_inventory)} low stock")
+                else:
+                    logger.info("✅ No significant changes - only quantity updates")
+                
+                # Always update the stored products
+                self.last_products = products
                 
         except Exception as e:
             logger.error(f"Check failed: {e}")
