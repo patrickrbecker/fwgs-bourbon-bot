@@ -20,10 +20,7 @@ Clean Email Formatting: Mobile-friendly email layout optimized for iPhone viewin
 # What It Does
 The bot scrapes the FWGS whiskey release page, extracting:
 
-Product names
-Prices
-Bottle sizes
-Current stock levels
+Product names, prices, bottle sizes and current stock levels
 
 It maintains a running inventory and compares each scan to detect changes. Minor quantity fluctuations are logged but don't trigger emails, while significant events (new products, sellouts, or critically low stock) generate immediate email alerts.
 
