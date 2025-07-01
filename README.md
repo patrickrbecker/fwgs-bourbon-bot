@@ -1,7 +1,8 @@
-# fwgs-bourbon-bot
+# FWGS Bourbon Monitor Bot
 
 An automated web scraper that monitors the Pennsylvania Fine Wine & Good Spirits (FWGS) whiskey release page for inventory changes and sends email alerts for important updates.
-Features
+
+# Features
 
 24/7 Automated Monitoring: Runs continuously as a systemd service, checking inventory every 5 minutes
 Smart Change Detection: Tracks products by name and distinguishes between minor quantity updates and significant changes
@@ -11,13 +12,12 @@ New bourbon arrivals
 Products that completely sell out
 Low inventory warnings (less than 5 bottles remaining)
 
-
 Multi-Recipient Support: Sends alerts to multiple email addresses
 Detailed Logging: Shows all inventory changes in system logs for reference without email spam
 Robust Scraping: Uses Selenium with multiple extraction methods to ensure all products are captured
 Clean Email Formatting: Mobile-friendly email layout optimized for iPhone viewing
 
-What It Does
+# What It Does
 The bot scrapes the FWGS whiskey release page, extracting:
 
 Product names
