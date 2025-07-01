@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 Enhanced bourbon monitor for FWGS whiskey releases - Direct and efficient approach
