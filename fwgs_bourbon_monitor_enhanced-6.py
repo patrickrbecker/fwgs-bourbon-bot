@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """
 Enhanced bourbon monitor for FWGS whiskey releases - Direct and efficient approach
@@ -438,6 +439,45 @@ class BourbonMonitor:
                             if stock_count < 5:
                                 low_inventory.append(product)
                 
+                # Check for inventory changes (for logging only)
+                inventory_changes = []
+                for name in current_names.intersection(previous_names):
+                    current_product = current_products_dict[name]
+                    previous_product = previous_products_dict[name]
+                    
+                    # Extract stock numbers
+                    current_parts = current_product.split(' | ')
+                    previous_parts = previous_product.split(' | ')
+                    
+                    if len(current_parts) >= 4 and len(previous_parts) >= 4:
+                        current_stock = current_parts[3]
+                        previous_stock = previous_parts[3]
+                        
+                        if current_stock != previous_stock:
+                            # Extract numbers
+                            current_match = re.search(r'(\d+)\s*In Stock', current_stock)
+                            previous_match = re.search(r'(\d+)\s*In Stock', previous_stock)
+                            
+                            if current_match and previous_match:
+                                current_num = int(current_match.group(1))
+                                previous_num = int(previous_match.group(1))
+                                change = current_num - previous_num
+                                
+                                inventory_changes.append({
+                                    'name': name,
+                                    'previous': previous_num,
+                                    'current': current_num,
+                                    'change': change,
+                                    'product': current_product
+                                })
+                
+                # Log inventory changes
+                if inventory_changes:
+                    print(f"\n📊 INVENTORY CHANGES:")
+                    for change in inventory_changes:
+                        change_symbol = "📈" if change['change'] > 0 else "📉"
+                        print(f"{change_symbol} {change['name']}: {change['previous']} → {change['current']} ({change['change']:+d})")
+                
                 # Only send email if there are actual changes or low inventory
                 if truly_new or truly_removed or low_inventory:
                     print(f"\n🚨 CHANGES DETECTED!")
@@ -488,9 +528,12 @@ class BourbonMonitor:
                     subject = "🥃 Bourbon Alert: " + " | ".join(email_parts)
                     
                     self.send_email(subject, message)
-                    logger.info(f"🔄 Changes processed: {len(truly_new)} new, {len(truly_removed)} removed, {len(low_inventory)} low stock")
+                    logger.info(f"🔄 Changes processed: {len(truly_new)} new, {len(truly_removed)} removed, {len(low_inventory)} low stock, {len(inventory_changes)} inventory updates")
                 else:
-                    logger.info("✅ No significant changes - only quantity updates")
+                    if inventory_changes:
+                        logger.info(f"✅ No significant changes - {len(inventory_changes)} quantity updates")
+                    else:
+                        logger.info("✅ No changes detected")
                 
                 # Always update the stored products
                 self.last_products = products
