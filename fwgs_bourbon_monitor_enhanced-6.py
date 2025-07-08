@@ -476,6 +476,21 @@ class BourbonMonitor:
                     for change in inventory_changes:
                         change_symbol = "📈" if change['change'] > 0 else "📉"
                         print(f"{change_symbol} {change['name']}: {change['previous']} → {change['current']} ({change['change']:+d})")
+                    
+                    # Add summary line
+                    total_changes = len(inventory_changes)
+                    increases = sum(1 for c in inventory_changes if c['change'] > 0)
+                    decreases = sum(1 for c in inventory_changes if c['change'] < 0)
+                    
+                    summary_parts = []
+                    if increases > 0:
+                        summary_parts.append(f"{increases} increased")
+                    if decreases > 0:
+                        summary_parts.append(f"{decreases} decreased")
+                    
+                    summary = f"📊 INVENTORY SUMMARY: {' and '.join(summary_parts)} out of {total_changes} products with stock changes"
+                    print(summary)
+                    logger.info(summary)
                 
                 # Only send email if there are actual changes or low inventory
                 if truly_new or truly_removed or low_inventory:
