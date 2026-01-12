@@ -13,6 +13,8 @@ import random
 import concurrent.futures
 from datetime import datetime
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+import nest_asyncio
+nest_asyncio.apply()
 
 # =============================================================================
 # CONFIGURATION
