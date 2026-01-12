@@ -10,11 +10,11 @@ import requests
 import signal
 import sys
 import random
-import concurrent.futures
+# import concurrent.futures  # Removed - caused asyncio issues
 from datetime import datetime
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
-import nest_asyncio
-nest_asyncio.apply()
+# import nest_asyncio
+# nest_asyncio.apply()
 
 # =============================================================================
 # CONFIGURATION
@@ -625,15 +625,6 @@ class WhiskeyMonitor:
         self.hot_items = set()
         self.hot_notified = set()
         self.running = True
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-
-    def _scrape_in_thread(self):
-        """Run scrape in separate thread to avoid asyncio conflict"""
-        return self.scraper.scrape()
-
-    def _fetch_urls_in_thread(self, products):
-        """Run URL fetch in separate thread"""
-        return self.scraper.fetch_product_urls(products)
 
     def check(self, is_first_run=False):
         """Run a single check"""
@@ -641,9 +632,8 @@ class WhiskeyMonitor:
         logger.info(f"Check at {datetime.now().strftime('%I:%M %p')}")
 
         try:
-            # Run scrape in thread to avoid asyncio conflict
-            future = self.executor.submit(self._scrape_in_thread)
-            products = future.result(timeout=120)
+            # Run scrape directly
+            products = self.scraper.scrape()
 
             if not products:
                 logger.error("No products found - skipping check")
@@ -711,26 +701,22 @@ class WhiskeyMonitor:
 
             # Send notifications (fetch URLs in thread)
             if new_available:
-                future = self.executor.submit(self._fetch_urls_in_thread, new_available)
-                new_available = future.result(timeout=60)
+                new_available = self.scraper.fetch_product_urls(new_available)
                 self.notifier.send_new_available(new_available)
                 logger.info(f"NEW AVAILABLE: {len(new_available)}")
 
             if new_coming_soon:
-                future = self.executor.submit(self._fetch_urls_in_thread, new_coming_soon)
-                new_coming_soon = future.result(timeout=60)
+                new_coming_soon = self.scraper.fetch_product_urls(new_coming_soon)
                 self.notifier.send_coming_soon(new_coming_soon)
                 logger.info(f"NEW COMING SOON: {len(new_coming_soon)}")
 
             if new_lottery:
-                future = self.executor.submit(self._fetch_urls_in_thread, new_lottery)
-                new_lottery = future.result(timeout=60)
+                new_lottery = self.scraper.fetch_product_urls(new_lottery)
                 self.notifier.send_lottery(new_lottery)
                 logger.info(f"NEW LOTTERY: {len(new_lottery)}")
 
             if now_available:
-                future = self.executor.submit(self._fetch_urls_in_thread, now_available)
-                now_available = future.result(timeout=60)
+                now_available = self.scraper.fetch_product_urls(now_available)
                 self.notifier.send_now_available(now_available)
                 logger.info(f"NOW AVAILABLE: {len(now_available)}")
 
@@ -782,7 +768,6 @@ class WhiskeyMonitor:
             if self.running:
                 self.check()
 
-        self.executor.shutdown(wait=False)
         logger.info("Monitor stopped")
 
 
