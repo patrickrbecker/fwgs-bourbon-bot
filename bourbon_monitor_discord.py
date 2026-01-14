@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 FWGS Whiskey Release Monitor - OPTIMIZED
-Fixed asyncio issue + performance optimizations
+With proper asyncio event loop cleanup on crash
 """
 
 import time
@@ -10,11 +10,10 @@ import requests
 import signal
 import sys
 import random
-# import concurrent.futures  # Removed - caused asyncio issues
+import asyncio
+import gc
 from datetime import datetime
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
-# import nest_asyncio
-# nest_asyncio.apply()
 
 # =============================================================================
 # CONFIGURATION
@@ -35,7 +34,7 @@ EXTRA_HTTP_HEADERS = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
     'Accept-Language': 'en-US,en;q=0.9',
     'Accept-Encoding': 'gzip, deflate, br, zstd',
-    'Sec-Ch-Ua': '"Google Chrome";v="143", "Chromium";v="143", "Not_A Brand";v="24"',
+    'Sec-Ch-Ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
     'Sec-Ch-Ua-Mobile': '?0',
     'Sec-Ch-Ua-Platform': '"Windows"',
     'Sec-Fetch-Dest': 'document',
@@ -100,11 +99,9 @@ Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
 const getParameterProxyHandler = {
     apply: function(target, thisArg, args) {
         const param = args[0];
-        // UNMASKED_VENDOR_WEBGL
         if (param === 37445) {
             return 'Google Inc. (Intel)';
         }
-        // UNMASKED_RENDERER_WEBGL
         if (param === 37446) {
             return 'ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)';
         }
@@ -112,7 +109,6 @@ const getParameterProxyHandler = {
     }
 };
 
-// Apply to WebGL contexts
 const originalGetContext = HTMLCanvasElement.prototype.getContext;
 HTMLCanvasElement.prototype.getContext = function(type, ...args) {
     const context = originalGetContext.call(this, type, ...args);
@@ -170,11 +166,99 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# BROWSER MANAGER - OPTIMIZED
+# ASYNCIO EVENT LOOP CLEANUP
+# =============================================================================
+
+def cleanup_asyncio_event_loop():
+    """
+    Properly clean up asyncio event loop after Playwright crash.
+    
+    This fixes the "Playwright Sync API inside the asyncio loop" error
+    by forcibly stopping and replacing the corrupted event loop.
+    
+    Returns True if cleanup succeeded. If cleanup fails, forces process exit.
+    """
+    logger.info("Cleaning up asyncio event loop...")
+    
+    cleanup_failed = False
+    
+    try:
+        # Try to get the current event loop
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            # No event loop exists, nothing to clean
+            logger.info("No event loop to clean")
+            return True
+        
+        # If loop is running, we need to stop it
+        if loop.is_running():
+            logger.info("Stopping running event loop...")
+            loop.stop()
+            
+            # Give it a moment to stop - multiple attempts
+            for i in range(5):
+                time.sleep(0.1)
+                if not loop.is_running():
+                    break
+            
+            if loop.is_running():
+                logger.error("Event loop refused to stop - will force exit")
+                cleanup_failed = True
+        
+        # Cancel all pending tasks (only if loop not running)
+        if not cleanup_failed and not loop.is_running():
+            try:
+                pending = asyncio.all_tasks(loop)
+                if pending:
+                    logger.info(f"Cancelling {len(pending)} pending tasks...")
+                    for task in pending:
+                        task.cancel()
+                    time.sleep(0.1)
+            except RuntimeError:
+                pass
+        
+        # Close the loop if it's not already closed
+        if not loop.is_closed() and not cleanup_failed:
+            logger.info("Closing event loop...")
+            try:
+                loop.close()
+            except Exception as e:
+                if "running event loop" in str(e).lower():
+                    logger.error(f"Cannot close running loop: {e} - will force exit")
+                    cleanup_failed = True
+                else:
+                    logger.warning(f"Error closing loop: {e}")
+        
+        # If cleanup failed, force exit to let systemd restart us clean
+        if cleanup_failed:
+            logger.error("Event loop cleanup failed - forcing process exit for clean restart")
+            import os
+            os._exit(1)
+        
+        # Create and set a fresh event loop
+        logger.info("Creating fresh event loop...")
+        new_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(new_loop)
+        
+        # Force garbage collection to clean up any lingering references
+        gc.collect()
+        
+        logger.info("Event loop cleanup complete")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Event loop cleanup failed: {e}")
+        # Last resort - force exit
+        logger.error("Forcing process exit for clean restart")
+        import os
+        os._exit(1)
+# =============================================================================
+# BROWSER MANAGER - with proper cleanup
 # =============================================================================
 
 class BrowserManager:
-    """Manages Playwright browser with stealth - OPTIMIZED"""
+    """Manages Playwright browser with proper asyncio cleanup on crash"""
 
     def __init__(self, headless=True):
         self.headless = headless
@@ -182,6 +266,7 @@ class BrowserManager:
         self.browser = None
         self.context = None
         self.page = None
+        self._started = False
 
     def __enter__(self):
         self.start()
@@ -189,12 +274,26 @@ class BrowserManager:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.stop()
+        # If there was an exception, clean up asyncio
+        if exc_type is not None:
+            cleanup_asyncio_event_loop()
         return False
 
     def start(self):
         """Launch browser with stealth"""
         logger.info("Starting Playwright browser...")
+        
+        # Clean up any leftover event loop state before starting
+        # This ensures we start fresh even if previous run crashed
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_closed():
+                asyncio.set_event_loop(asyncio.new_event_loop())
+        except RuntimeError:
+            asyncio.set_event_loop(asyncio.new_event_loop())
+        
         self.playwright = sync_playwright().start()
+        self._started = True
 
         viewport_width = 1920 + random.randint(-100, 100)
         viewport_height = 1080 + random.randint(-50, 50)
@@ -209,7 +308,7 @@ class BrowserManager:
         )
 
         self.context = self.browser.new_context(
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
             viewport={'width': viewport_width, 'height': viewport_height},
             locale='en-US',
             timezone_id='America/New_York',
@@ -223,27 +322,55 @@ class BrowserManager:
         logger.info(f"Browser started (viewport: {viewport_width}x{viewport_height})")
 
     def stop(self):
-        """Clean shutdown"""
-        for resource in [self.page, self.context, self.browser, self.playwright]:
-            if resource:
-                try:
-                    if hasattr(resource, 'close'):
-                        resource.close()
-                    elif hasattr(resource, 'stop'):
-                        resource.stop()
-                except Exception:
-                    pass
-        logger.info("Browser stopped")
+        """Clean shutdown with proper error handling for each resource"""
+        errors = []
+
+        # Close in reverse order of creation
+        if self.page:
+            try:
+                self.page.close()
+            except Exception as e:
+                errors.append(f"page: {e}")
+            self.page = None
+
+        if self.context:
+            try:
+                self.context.close()
+            except Exception as e:
+                errors.append(f"context: {e}")
+            self.context = None
+
+        if self.browser:
+            try:
+                self.browser.close()
+            except Exception as e:
+                errors.append(f"browser: {e}")
+            self.browser = None
+
+        if self.playwright:
+            try:
+                self.playwright.stop()
+            except Exception as e:
+                errors.append(f"playwright: {e}")
+            self.playwright = None
+
+        self._started = False
+
+        if errors:
+            logger.warning(f"Browser cleanup errors: {', '.join(errors)}")
+            # If we had cleanup errors, do asyncio cleanup too
+            cleanup_asyncio_event_loop()
+        else:
+            logger.info("Browser stopped")
 
     def close_popups(self):
-        """Close popups including age gate - OPTIMIZED (single pass)"""
+        """Close popups including age gate"""
         try:
             js_close = """
             () => {
                 let clicked = new Set();
                 let closed = [];
 
-                // Age gate - YES button (do first)
                 document.querySelectorAll('button, [role="button"]').forEach(btn => {
                     if (clicked.has(btn)) return;
                     const text = (btn.textContent || '').toUpperCase().trim();
@@ -254,7 +381,6 @@ class BrowserManager:
                     }
                 });
 
-                // Close buttons
                 document.querySelectorAll('[aria-label*="close" i], [aria-label*="dismiss" i]').forEach(btn => {
                     if (clicked.has(btn)) return;
                     if (btn.offsetParent !== null) {
@@ -281,12 +407,10 @@ class BrowserManager:
         try:
             logger.info("Loading products...")
             
-            # Scroll to trigger lazy loading
             self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             self.page.wait_for_timeout(2000)
             self.page.evaluate("window.scrollTo(0, 0)")
             
-            # Wait up to 10 seconds for products (check every 2 sec)
             for i in range(5):
                 self.page.wait_for_timeout(2000)
                 count = self.page.evaluate("document.querySelectorAll('.card:has([class*=price])').length")
@@ -294,7 +418,6 @@ class BrowserManager:
                     logger.info(f"Products found: {count} (attempt {i+1})")
                     return 0
                 logger.info(f"Waiting... attempt {i+1}")
-                # Scroll again to retry lazy load
                 self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 self.page.wait_for_timeout(500)
                 self.page.evaluate("window.scrollTo(0, 0)")
@@ -307,40 +430,38 @@ class BrowserManager:
             return 0
 
     def navigate(self, url):
-        """Navigate and prepare page - OPTIMIZED"""
+        """Navigate and prepare page"""
         logger.info(f"Navigating to {url}")
         self.page.goto(url, wait_until='domcontentloaded', timeout=60000)
 
-        # Reduced from 15s to 3s - site never fully settles
         try:
             self.page.wait_for_load_state('networkidle', timeout=3000)
             logger.info("Page stabilized")
         except PlaywrightTimeoutError:
-            pass  # Expected - site uses lazy loading
+            pass
 
-        # Single popup pass (was called twice before)
         self.close_popups()
-
-        # Quick scroll for lazy content
         self.load_all_products()
-
         logger.info("Page ready")
 
 
 # =============================================================================
-# PRODUCT SCRAPER
+# PRODUCT SCRAPER - with crash recovery
 # =============================================================================
 
 class ProductScraper:
-    """Scrapes whiskey products using Playwright + JS"""
+    """Scrapes whiskey products with proper crash recovery"""
 
     def __init__(self, target_url, headless=True):
         self.target_url = target_url
         self.headless = headless
 
     def scrape(self):
-        """Scrape products using fast JS extraction"""
-        with BrowserManager(self.headless) as browser:
+        """Scrape products with crash recovery"""
+        browser = None
+        try:
+            browser = BrowserManager(self.headless)
+            browser.start()
             browser.navigate(self.target_url)
             products = self._extract_products_js(browser)
             filtered = self._filter_whiskey(products)
@@ -356,6 +477,21 @@ class ProductScraper:
 
             logger.info(f"Scrape complete: {len(filtered)} whiskey products")
             return filtered
+            
+        except Exception as e:
+            logger.error(f"Scrape error: {e}")
+            # Clean up asyncio on any error
+            cleanup_asyncio_event_loop()
+            return []
+            
+        finally:
+            if browser:
+                try:
+                    browser.stop()
+                except:
+                    pass
+                # Always clean up asyncio after scrape to ensure fresh state
+                cleanup_asyncio_event_loop()
 
     def fetch_product_urls(self, products):
         """Fetch URLs by clicking products"""
@@ -363,8 +499,11 @@ class ProductScraper:
             return products
 
         logger.info(f"Fetching URLs for {len(products)} product(s)...")
-
-        with BrowserManager(self.headless) as browser:
+        
+        browser = None
+        try:
+            browser = BrowserManager(self.headless)
+            browser.start()
             browser.navigate(self.target_url)
 
             for product in products:
@@ -401,7 +540,20 @@ class ProductScraper:
                 except Exception as e:
                     logger.warning(f"Error getting URL for {product.get('name', '?')}: {e}")
 
-        return products
+            return products
+            
+        except Exception as e:
+            logger.error(f"URL fetch error: {e}")
+            cleanup_asyncio_event_loop()
+            return products
+            
+        finally:
+            if browser:
+                try:
+                    browser.stop()
+                except:
+                    pass
+                cleanup_asyncio_event_loop()
 
     def _extract_products_js(self, browser):
         """Extract products with single JS call"""
@@ -611,14 +763,13 @@ class DiscordNotifier:
 
 
 # =============================================================================
-# MONITOR - Fixed to run playwright in thread pool to avoid asyncio conflict
+# MONITOR
 # =============================================================================
 
 class WhiskeyMonitor:
     """Main monitoring class"""
 
     def __init__(self):
-        self.scraper = ProductScraper(CONFIG['url'])
         self.notifier = DiscordNotifier(CONFIG['discord_webhook_url'])
         self.last_products = {}
         self.stock_history = {}
@@ -632,8 +783,8 @@ class WhiskeyMonitor:
         logger.info(f"Check at {datetime.now().strftime('%I:%M %p')}")
 
         try:
-            # Run scrape directly
-            products = self.scraper.scrape()
+            scraper = ProductScraper(CONFIG["url"])
+            products = scraper.scrape()
 
             if not products:
                 logger.error("No products found - skipping check")
@@ -699,24 +850,24 @@ class WhiskeyMonitor:
                                 self.hot_notified.add(name_lower)
                                 hot_to_notify.append(p)
 
-            # Send notifications (fetch URLs in thread)
+            # Send notifications
             if new_available:
-                new_available = self.scraper.fetch_product_urls(new_available)
+                new_available = scraper.fetch_product_urls(new_available)
                 self.notifier.send_new_available(new_available)
                 logger.info(f"NEW AVAILABLE: {len(new_available)}")
 
             if new_coming_soon:
-                new_coming_soon = self.scraper.fetch_product_urls(new_coming_soon)
+                new_coming_soon = scraper.fetch_product_urls(new_coming_soon)
                 self.notifier.send_coming_soon(new_coming_soon)
                 logger.info(f"NEW COMING SOON: {len(new_coming_soon)}")
 
             if new_lottery:
-                new_lottery = self.scraper.fetch_product_urls(new_lottery)
+                new_lottery = scraper.fetch_product_urls(new_lottery)
                 self.notifier.send_lottery(new_lottery)
                 logger.info(f"NEW LOTTERY: {len(new_lottery)}")
 
             if now_available:
-                now_available = self.scraper.fetch_product_urls(now_available)
+                now_available = scraper.fetch_product_urls(now_available)
                 self.notifier.send_now_available(now_available)
                 logger.info(f"NOW AVAILABLE: {len(now_available)}")
 
@@ -733,6 +884,8 @@ class WhiskeyMonitor:
 
         except Exception as e:
             logger.error(f"Check failed: {e}")
+            # Clean up asyncio on any check failure
+            cleanup_asyncio_event_loop()
             return False
 
     def run(self):
