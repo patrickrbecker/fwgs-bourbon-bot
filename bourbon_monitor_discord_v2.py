@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-FWGS Whiskey Release Monitor - FRESH BROWSER EACH CHECK (v3)
-Fixed asyncio loop corruption issue.
+FWGS Whiskey Release Monitor - FRESH BROWSER EACH CHECK
+Same pattern as Bot 2 which runs stable.
 """
 
 import time
@@ -9,8 +9,6 @@ import logging
 import requests
 import signal
 import random
-import asyncio
-import gc
 from datetime import datetime
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
@@ -60,40 +58,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# ASYNCIO CLEANUP - Critical for preventing loop corruption
-# =============================================================================
-
-def reset_asyncio():
-    """Reset asyncio event loop to clean state"""
-    try:
-        # Try to get existing loop
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # Can't close a running loop, but we can mark for replacement
-                pass
-            elif not loop.is_closed():
-                loop.close()
-        except RuntimeError:
-            pass  # No event loop exists, that's fine
-        
-        # Create fresh event loop
-        new_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(new_loop)
-        
-        # Force garbage collection
-        gc.collect()
-        
-    except Exception as e:
-        logger.debug(f"Asyncio reset note: {e}")
-
-
-# =============================================================================
-# BROWSER MANAGER
+# BROWSER MANAGER (Same pattern as Bot 2)
 # =============================================================================
 
 class BrowserManager:
-    """Simple browser manager - fresh browser each use with asyncio cleanup"""
+    """Simple browser manager - fresh browser each use"""
 
     def __init__(self, headless=True):
         self.headless = headless
@@ -111,10 +80,7 @@ class BrowserManager:
         return False
 
     def start(self):
-        """Launch browser with clean asyncio state"""
-        # Reset asyncio before starting playwright
-        reset_asyncio()
-        
+        """Launch browser"""
         logger.info("Starting browser...")
         self.playwright = sync_playwright().start()
 
@@ -150,31 +116,24 @@ class BrowserManager:
                 self.page.close()
             except Exception as e:
                 errors.append(f"page: {e}")
-            self.page = None
 
         if self.context:
             try:
                 self.context.close()
             except Exception as e:
                 errors.append(f"context: {e}")
-            self.context = None
 
         if self.browser:
             try:
                 self.browser.close()
             except Exception as e:
                 errors.append(f"browser: {e}")
-            self.browser = None
 
         if self.playwright:
             try:
                 self.playwright.stop()
             except Exception as e:
                 errors.append(f"playwright: {e}")
-            self.playwright = None
-
-        # Always reset asyncio after stopping
-        reset_asyncio()
 
         if errors:
             logger.warning(f"Browser cleanup errors: {', '.join(errors)}")
@@ -439,7 +398,6 @@ class WhiskeyMonitor:
         self.hot_notified = set()
         self.running = True
         self.checks_completed = 0
-        self.consecutive_failures = 0
 
     def _filter_whiskey(self, products):
         """Filter to whiskey/bourbon products"""
@@ -478,7 +436,6 @@ class WhiskeyMonitor:
 
                 if not products:
                     logger.error("No products found")
-                    self.consecutive_failures += 1
                     return False
 
                 filtered = self._filter_whiskey(products)
@@ -494,11 +451,8 @@ class WhiskeyMonitor:
 
                 if not filtered:
                     logger.error("No whiskey products after retry")
-                    self.consecutive_failures += 1
                     return False
 
-                # Success - reset failure counter
-                self.consecutive_failures = 0
                 self.checks_completed += 1
                 logger.info(f"Scrape complete: {len(filtered)} whiskey products")
 
@@ -589,15 +543,12 @@ class WhiskeyMonitor:
 
         except Exception as e:
             logger.error(f"Check failed: {e}")
-            self.consecutive_failures += 1
-            # Reset asyncio after any failure
-            reset_asyncio()
             return False
 
     def run(self):
         """Main monitoring loop"""
         logger.info("=" * 50)
-        logger.info("WHISKEY RELEASE MONITOR (v3 - asyncio fix)")
+        logger.info("WHISKEY RELEASE MONITOR")
         logger.info(f"URL: {CONFIG['url']}")
         logger.info(f"Interval: {CONFIG['check_interval']}s")
         logger.info("=" * 50)
