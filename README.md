@@ -1,88 +1,84 @@
-# FWGS Bourbon Monitor Bot
+# FWGS Whiskey Release Monitor
 
-Automated monitors for Pennsylvania Fine Wine & Good Spirits (FWGS) bourbon/whiskey pages. Sends Discord alerts for new products, status changes, and hot items.
+Monitors the Pennsylvania Fine Wine & Good Spirits whiskey release page and sends Discord alerts when new products appear.
 
-## Versions
+## Structure
 
-### `bourbon_monitor_playwright.py` (Latest - Recommended)
-Fast Playwright + JavaScript extraction version.
+```
+bourbon_monitor/
+  __init__.py      - Package entry point
+  config.py        - Configuration, constants, logging setup
+  browser.py       - Playwright browser manager with stealth
+  scraper.py       - Product extraction from FWGS page
+  storage.py       - JSON persistence with flicker protection
+  notifier.py      - Discord webhook notifications with retry
+  main.py          - Main monitoring loop, signal handling
+run.py             - Entry point
+requirements.txt
+.env               - Discord webhook URL (not committed)
+```
 
-**Features:**
-- Playwright browser automation (fast, reliable)
-- Single JavaScript call extracts all products (~1 second)
-- Status tracking: available, coming_soon, lottery, out_of_stock
-- Status change alerts (NOW AVAILABLE FOR PURCHASE!)
-- Hot item tracking (alerts when stock dropping fast)
-- Direct product URL fetching
-- Discord webhook notifications
-- 30-second check interval
+## Setup
 
-**Requirements:**
 ```bash
-pip install playwright requests
+# Create venv
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
 playwright install chromium
+
+# Configure
+cp .env.example .env
+# Edit .env with your Discord webhook URL
 ```
 
-### Legacy Versions
-- `bourbon_monitor_fixed.py` - Selenium version with status tracking
-- `fwgs_bourbon_monitor_enhanced-6.py` - Original Selenium + email alerts
+## Run
 
-## Configuration
-
-Edit the CONFIG section in the script:
-```python
-CONFIG = {
-    'url': 'https://www.finewineandgoodspirits.com/en/whiskey-release/whiskey-release',
-    'check_interval': 30,  # seconds
-    'discord_webhook_url': 'YOUR_WEBHOOK_URL',
-}
-```
-
-## Deployment
-
-### As a systemd service:
 ```bash
-sudo nano /etc/systemd/system/bourbon-bot.service
+python run.py
 ```
+
+## Deploy as systemd service
 
 ```ini
 [Unit]
 Description=FWGS Whiskey Release Monitor
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=your_user
-WorkingDirectory=/path/to/bot
-Environment="HOME=/home/your_user"
-ExecStart=/path/to/venv/bin/python3 bourbon_monitor_playwright.py
-Restart=always
-RestartSec=10
+User=patbecker-mac
+WorkingDirectory=/opt/bourbon-bot
+ExecStart=/opt/bourbon-bot/venv/bin/python3 /opt/bourbon-bot/run.py
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bourbon-bot
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable bourbon-bot
-sudo systemctl start bourbon-bot
-```
+## Features
 
-## Alert Types
+- Playwright headless browser with stealth scripts (anti-detection)
+- 30-second check interval
+- Flicker protection (2-hour cooldown prevents re-notifications)
+- Persistent state survives restarts (products.json + state.json)
+- Safety checks: skips if 0 products or >50% count drop
+- Graceful shutdown on SIGTERM/SIGINT
+- Exits after 5 consecutive failures (systemd restarts)
+- Discord retry with exponential backoff + rate limit handling
+- Error notification throttling (10-minute cooldown)
+
+## Alerts
 
 | Alert | Trigger | @everyone |
 |-------|---------|-----------|
-| NEW WHISKEY RELEASE! | New product, status=available | Yes |
-| NEW BUT COMING SOON! | New product, status=coming_soon | No |
-| NEW BUT LOTTERY! | New product, status=lottery | No |
-| NOW AVAILABLE FOR PURCHASE! | Status changed to available | Yes |
-| HOT ITEMS GOING FAST! | Stock dropping rapidly, still > 0 | Yes |
-
-## Status Detection
-
-Products are categorized by parsing the page text:
-- `available` - Has "Add to Cart" or no blocking indicators
-- `coming_soon` - Contains "coming soon"
-- `lottery` - Contains "lottery"
-- `out_of_stock` - Contains "out of stock" or "sold out"
+| NEW WHISKEY RELEASE! | New product detected | Yes |
+| Monitor Started | Service startup | No |
+| Monitor Error | Scrape failure | No |

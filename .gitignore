@@ -1,8 +1,7 @@
-venv/
+.env
 __pycache__/
 *.pyc
-.env
-
-*.bak
-*.png
-error_*.html
+data/
+logs/
+venv/
+.DS_Store
