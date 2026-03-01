@@ -3,7 +3,7 @@
 import logging
 import random
 import sys
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
 
 logger = logging.getLogger(__name__)
 
@@ -152,12 +152,6 @@ class BrowserManager:
         """Navigate to URL and prepare page"""
         logger.info(f"Navigating to {url}")
         self.page.goto(url, wait_until='domcontentloaded', timeout=60000)
-
-        # Wait for network to settle
-        try:
-            self.page.wait_for_load_state('networkidle', timeout=15000)
-        except PlaywrightTimeoutError:
-            logger.info("Network idle timeout - continuing anyway")
 
         # Close any popups
         self.close_popups()
