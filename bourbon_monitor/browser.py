@@ -148,6 +148,35 @@ class BrowserManager:
         except Exception as e:
             logger.warning(f"Popup close error: {e}")
 
+    def load_all_products(self):
+        """Click Load More until all products are visible"""
+        clicks = 0
+        consecutive_misses = 0
+
+        while clicks < 15:
+            try:
+                self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                self.page.wait_for_timeout(500)
+
+                load_more = self.page.get_by_role("button", name="Load More")
+                if load_more.is_visible(timeout=2000):
+                    load_more.click()
+                    clicks += 1
+                    consecutive_misses = 0
+                    logger.info(f"Clicked Load More (#{clicks})")
+                    self.page.wait_for_timeout(2000)
+                else:
+                    consecutive_misses += 1
+                    if consecutive_misses >= 2:
+                        break
+            except Exception:
+                consecutive_misses += 1
+                if consecutive_misses >= 2:
+                    break
+
+        if clicks:
+            logger.info(f"Loaded all products ({clicks} Load More clicks)")
+
     def navigate(self, url):
         """Navigate to URL and prepare page"""
         logger.info(f"Navigating to {url}")
@@ -161,5 +190,8 @@ class BrowserManager:
         self.page.wait_for_timeout(2000)
         self.page.evaluate("window.scrollTo(0, 0)")
         self.page.wait_for_timeout(1000)
+
+        # Load all paginated products
+        self.load_all_products()
 
         logger.info("Page ready")
