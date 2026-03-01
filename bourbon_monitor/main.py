@@ -74,14 +74,21 @@ def run_check(storage, notifier, is_first_run=False):
         # Detect new products
         new_arrivals = storage.get_new_products(old_products, new_products)
 
+        # Detect status changes (coming_soon/lottery/out_of_stock -> available)
+        status_changes = storage.get_status_changes(old_products, new_products)
+
         # Send notifications (not on first run)
-        if new_arrivals and not is_first_run:
-            notifier.send_new_products(new_arrivals)
-            logger.info(f"NEW ARRIVALS: {len(new_arrivals)} product(s)")
-        elif new_arrivals and is_first_run:
+        if not is_first_run:
+            if new_arrivals:
+                notifier.send_new_products(new_arrivals)
+                logger.info(f"NEW ARRIVALS: {len(new_arrivals)} product(s)")
+            if status_changes:
+                notifier.send_now_available(status_changes)
+                logger.info(f"NOW AVAILABLE: {len(status_changes)} product(s)")
+            if not new_arrivals and not status_changes:
+                logger.info("No changes detected")
+        elif new_arrivals:
             logger.info(f"Establishing baseline with {len(new_arrivals)} product(s)")
-        else:
-            logger.info("No new products found")
 
         # Save current state
         storage.save(new_products)

@@ -58,6 +58,38 @@ class DiscordNotifier:
 
         return self._send_webhook(message, mention_everyone=True)
 
+    def send_now_available(self, products):
+        """Send notification for products that just became available"""
+        if not products:
+            return True
+
+        logger.info(f"Sending NOW AVAILABLE notification for {len(products)} product(s)...")
+
+        message = "**NOW AVAILABLE FOR PURCHASE!**\n\n"
+
+        for product in products:
+            name = product.get("name", "Unknown")
+            price = self._format_price(product.get("price"))
+            availability = product.get("availability", 0)
+            url = product.get("url")
+
+            message += f"**{name}**\n"
+            message += f"  {price}"
+            if availability > 1:
+                message += f" | {availability} in stock"
+            elif availability == 1:
+                message += " | In Stock"
+            message += "\n"
+
+            if url:
+                message += f"  {url}\n"
+            message += "\n"
+
+        message += f"GO GO GO! {Config.TARGET_URL}\n"
+        message += datetime.now().strftime("%B %d, %Y at %I:%M %p")
+
+        return self._send_webhook(message, mention_everyone=True)
+
     def send_startup(self, products):
         """Send startup notification"""
         message = "**Whiskey Release Monitor Started!**\n\n"

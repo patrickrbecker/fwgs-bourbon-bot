@@ -103,3 +103,22 @@ class ProductStorage:
                     logger.info(f"Skipping flicker for {product['name']} (seen {time_since_seen/60:.0f} min ago)")
 
         return new
+
+    def get_status_changes(self, old_products, new_products):
+        """Find products that changed from coming_soon/lottery/out_of_stock to available"""
+        old_by_name = {p['name'].lower(): p for p in old_products}
+        changed = []
+
+        for product in new_products:
+            name_lower = product['name'].lower()
+            if name_lower not in old_by_name:
+                continue
+
+            old_status = old_by_name[name_lower].get('status', 'available')
+            new_status = product.get('status', 'available')
+
+            if old_status != new_status and new_status == 'available':
+                logger.info(f"STATUS CHANGE: {product['name']} {old_status} -> available")
+                changed.append(product)
+
+        return changed
