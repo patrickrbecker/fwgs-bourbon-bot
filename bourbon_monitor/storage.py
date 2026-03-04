@@ -2,6 +2,8 @@
 
 import json
 import logging
+import os
+import tempfile
 import time
 from pathlib import Path
 from .config import Config, Constants
@@ -39,14 +41,16 @@ class ProductStorage:
             logger.error(f"Error loading state: {e}")
 
     def _save_state(self):
-        """Persist state to disk"""
+        """Persist state to disk (atomic write)"""
         try:
             state = {
                 'recently_seen': self.recently_seen,
                 'saved_at': time.time(),
             }
-            with open(self.state_file, 'w') as f:
+            tmp_fd, tmp_path = tempfile.mkstemp(dir=str(self.state_file.parent), suffix='.tmp')
+            with os.fdopen(tmp_fd, 'w') as f:
                 json.dump(state, f, indent=2)
+            os.rename(tmp_path, str(self.state_file))
         except Exception as e:
             logger.error(f"Error saving state: {e}")
 
@@ -66,10 +70,12 @@ class ProductStorage:
             return []
 
     def save(self, products):
-        """Save products to JSON file"""
+        """Save products to JSON file (atomic write)"""
         try:
-            with open(self.file_path, 'w') as f:
+            tmp_fd, tmp_path = tempfile.mkstemp(dir=str(self.file_path.parent), suffix='.tmp')
+            with os.fdopen(tmp_fd, 'w') as f:
                 json.dump(products, f, indent=2)
+            os.rename(tmp_path, str(self.file_path))
             logger.info(f"Saved {len(products)} products to storage")
             self._save_state()
             return True

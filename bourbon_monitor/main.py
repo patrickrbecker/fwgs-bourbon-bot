@@ -78,19 +78,30 @@ def run_check(storage, notifier, is_first_run=False):
         status_changes = storage.get_status_changes(old_products, new_products)
 
         # Send notifications (not on first run)
+        notification_failed = False
         if not is_first_run:
             if new_arrivals:
-                notifier.send_new_products(new_arrivals)
-                logger.info(f"NEW ARRIVALS: {len(new_arrivals)} product(s)")
+                if notifier.send_new_products(new_arrivals):
+                    logger.info(f"NEW ARRIVALS: {len(new_arrivals)} product(s)")
+                else:
+                    logger.error("Failed to send new arrivals notification - NOT saving state")
+                    notification_failed = True
             if status_changes:
-                notifier.send_now_available(status_changes)
-                logger.info(f"NOW AVAILABLE: {len(status_changes)} product(s)")
+                if notifier.send_now_available(status_changes):
+                    logger.info(f"NOW AVAILABLE: {len(status_changes)} product(s)")
+                else:
+                    logger.error("Failed to send availability notification - NOT saving state")
+                    notification_failed = True
             if not new_arrivals and not status_changes:
                 logger.info("No changes detected")
         elif new_arrivals:
             logger.info(f"Establishing baseline with {len(new_arrivals)} product(s)")
 
-        # Save current state
+        # Only save state if notifications succeeded (or weren't needed)
+        if notification_failed:
+            logger.warning("Skipping state save - will retry notifications next cycle")
+            return False
+
         storage.save(new_products)
 
         # Reset failure counter on success
