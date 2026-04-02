@@ -242,7 +242,7 @@ class BrowserManager:
         """Navigate and prepare page - OPTIMIZED version"""
         logger.info(f"Navigating to {url}")
 
-        self.page.goto(url, wait_until='networkidle', timeout=60000)
+        self.page.goto(url, wait_until='domcontentloaded', timeout=60000)
 
         # Quick wait for initial content - reduced from 15s to 3s
         # Site never fully settles due to lazy loading, so don't wait long
